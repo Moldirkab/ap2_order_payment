@@ -1,1 +1,5 @@
 .idea/
+proto-repo/
+generated-repo/
+ap2-generated/
+.github/

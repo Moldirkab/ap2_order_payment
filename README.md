@@ -1,200 +1,84 @@
-# AP2 Assignment 1 – Order & Payment Microservices
+# Order & Payment Microservices (gRPC + REST)
 
-## Overview
-A two-service platform built in Go using Clean Architecture principles.
-Services communicate via REST only, each owns its own database.
+##  Overview
 
+This project implements a **two-service microservice system** using **Clean Architecture**, **gRPC**, and **REST**.
 
----
+The system consists of:
+- **Order Service** – handles order creation and state
+- **Payment Service** – processes payments and enforces limits
 
-## Clean Architecture
-Each service follows strict layering:
-```
-delivery/transport  →  usecase  →  repository  →  database
-                           ↑
-                       interfaces (ports)
-                       domain has zero dependencies
-```
-
-- **Domain** — pure Go structs, no imports from HTTP or DB
-- **Usecase** — business logic only, depends on interfaces not implementations
-- **Repository** — all SQL lives here, implements repository interface
-- **Transport** — thin handlers, parse request → call usecase → return response
-- **main.go** — manual dependency injection, composition root
+External communication is done via **REST**, while internal service-to-service communication is implemented using **gRPC**.
 
 ---
 
-## Bounded Contexts
+##  Architecture
 
-### Order Context
-- Owns the full order lifecycle: Pending → Paid / Failed / Cancelled
-- Has its own `order_db` database
-- Does NOT touch payment tables directly
-- Calls Payment Service via HTTP to authorize payment
+![Architecture](architecture2.png)
 
-### Payment Context
-- Owns payment authorization and transaction records
-- Has its own `payment_db` database
-- Does NOT know about orders — only receives payment requests
-- Applies business rule: amount > 100000 → Declined
-
----
-
-## Failure Handling
-
-### Payment Service Unavailable
-1. HTTP client timeout trips after **2 seconds**
-2. Order is marked as **Failed**
-3. Order Service returns **503 Service Unavailable**
-
-**Why Failed and not Pending?**
-Pending means "waiting for a payment attempt".
-If the payment service is unreachable, the attempt was made but could not complete.
-Marking as Failed is a clear terminal state — the client must submit a new order to retry.
-Keeping it as Pending would be ambiguous and could lead to orphaned orders.
-
----
-## Architecture Diagram
-![Architecture Diagram](architecture.png)
-
----
-## Idempotency (Bonus)
-Implemented via `Idempotency-Key` header on `POST /orders`.
-
-- Client sends a unique key per intended operation
-- If the same key is received again, the existing order is returned immediately
-- No duplicate order or payment is created
-- `NULL` is stored for requests without a key (allows multiple orders without keys)
-- DB `UNIQUE` constraint on `idempotency_key` acts as a safety net
-```
-Same key -> returns existing order (200)
-New key  -> creates new order (201)
-No key -> not allowed
-```
-## API Examples
-
-### 1. Create Order — Happy Path (Paid)
-```
-POST http://localhost:8080/orders
-Content-Type: application/json
-Idempotency-Key: order-laptop-001
-```
-Body:
-```json
-{
-    "customer_id": "cust-1",
-    "item_name": "Laptop",
-    "amount": 50000
-}
-```
-Expected `201`:
-```json
-{
-    "ID": "abc-123",
-    "CustomerID": "cust-1",
-    "ItemName": "Laptop",
-    "Amount": 50000,
-    "Status": "Paid",
-    "IdempotencyKey": "order-laptop-001"
-}
-```
+### Flow:
+1. Client sends HTTP request → Order Service
+2. Order Service stores order as `Pending`
+3. Order Service calls Payment Service via gRPC
+4. Payment Service returns:
+    - `Authorized` → Order becomes `Paid`
+    - `Declined` → Order becomes `Failed`
+5. Order Service updates database
 
 ---
 
-### 2. Create Order — Declined (amount > 100000)
-```
-POST http://localhost:8080/orders
-Content-Type: application/json
-Idempotency-Key: order-ferrari-001
-```
-Body:
-```json
-{
-    "customer_id": "cust-2",
-    "item_name": "Ferrari",
-    "amount": 200000
-}
-```
-Expected `201`:
-```json
-{
-    "ID": "xyz-456",
-    "CustomerID": "cust-2",
-    "ItemName": "Ferrari",
-    "Amount": 200000,
-    "Status": "Failed",
-    "IdempotencyKey": "order-ferrari-001"
-}
-```
+##  Microservices
+
+### 1. Order Service
+- REST API (Gin)
+- gRPC server (for streaming updates)
+- Own PostgreSQL database
+- Handles:
+    - Order creation
+    - Idempotency
+    - Status updates
+    - Cancellation rules
+
+### 2. Payment Service
+- gRPC server only
+- Own PostgreSQL database
+- Handles:
+    - Payment processing
+    - Business rule: amount > 100000 → Declined
 
 ---
 
-### 3. Idempotency — Send Same Request Twice
-```
-POST http://localhost:8080/orders
-Content-Type: application/json
-Idempotency-Key: order-laptop-001
-```
-Body:
-```json
-{
-    "customer_id": "cust-1",
-    "item_name": "Laptop",
-    "amount": 50000
-}
-```
-Expected `200` (already existed, same order returned):
-```json
-{
-    "ID": "abc-123",
-    "Status": "Paid",
-    "IdempotencyKey": "order-laptop-001"
-}
-```
-Same ID as request 1 ✅ No duplicate in database ✅
+## Contract-First Approach
+
+This project follows **Contract-First design** using Protobuf.
+
+###  Proto Repository
+Contains only `.proto` files:
+👉 https://github.com/Moldirkab/ap2-protos
+
+### ⚙ Generated Code Repository
+Contains `.pb.go` files generated automatically via GitHub Actions:
+👉 https://github.com/Moldirkab/ap2-generated
+
+- GitHub Actions compiles `.proto` → Go code
+- Versioned release is used: `v1.0.0`
 
 ---
 
-### 4. Get Order by ID
-```
-GET http://localhost:8080/orders/abc-123
-```
-Expected `200`:
-```json
-{
-    "ID": "abc-123",
-    "CustomerID": "cust-1",
-    "ItemName": "Laptop",
-    "Amount": 50000,
-    "Status": "Paid",
-    "IdempotencyKey": "order-laptop-001"
-}
-```
+##  Dependency Usage
 
+Services import generated contracts using:
+
+```bash
+go get github.com/Moldirkab/ap2-generated@v1.0.0 
+```
 ---
+## Server-Side Streaming
 
-### 5. Cancel Order — Then Try to Cancel Paid Order
-First create a new order:
+To demonstrate gRPC capabilities, the Order Service also acts as a **gRPC Server** for order tracking.
+
+### Streaming Endpoint
+```proto
+rpc SubscribeToOrderUpdates(OrderRequest) returns (stream OrderStatusUpdate);
 ```
-POST http://localhost:8080/orders
-Content-Type: application/json
-Idempotency-Key: order-phone-001
-```
-Body:
-```json
-{
-    "customer_id": "cust-3",
-    "item_name": "Phone",
-    "amount": 30000
-}
-```
-Then try to cancel it (Status is Paid):
-```
-PATCH http://localhost:8080/orders/{id}/cancel
-```
-Expected `400`:
-```json
-{
-    "error": "only pending orders can be cancelled"
-}
-```
+![Stream](stream.png)

@@ -58,6 +58,8 @@ func (uc *OrderUsecase) CreateOrder(customerID, item string, amount int64, idemp
 		return nil, false, err
 	}
 
+	time.Sleep(2 * time.Second)
+
 	status, err := uc.payment.ProcessPayment(order.ID, order.Amount)
 	if err != nil {
 		_ = uc.repo.UpdateStatus(order.ID, "Failed")
