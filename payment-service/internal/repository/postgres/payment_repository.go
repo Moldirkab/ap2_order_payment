@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"payment-service/internal/domain/model"
 	"payment-service/internal/repository"
@@ -40,4 +41,28 @@ func (r *paymentRepo) GetByOrderID(orderID string) (*model.Payment, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+func (r *paymentRepo) GetStats(ctx context.Context) (*model.PaymentStats, error) {
+	query := `
+		SELECT
+			COUNT(*) AS total_payments,
+			COUNT(*) FILTER (WHERE status = 'AUTHORIZED') AS successful_counts,
+			COUNT(*) FILTER (WHERE status = 'FAILED') AS failed_counts,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'AUTHORIZED'), 0) AS total_amount
+		FROM payments
+	`
+
+	var stats model.PaymentStats
+
+	err := r.db.QueryRowContext(ctx, query).Scan(
+		&stats.TotalPayments,
+		&stats.SuccessfulCounts,
+		&stats.FailedCounts,
+		&stats.TotalAmount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &stats, nil
 }

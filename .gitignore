@@ -3,3 +3,5 @@ proto-repo/
 generated-repo/
 ap2-generated/
 .github/
+.DS_Store
+.env

@@ -7,3 +7,10 @@ type Payment struct {
 	Amount        int64  // Amount in cents
 	Status        string // "Authorized", "Declined"
 }
+
+type PaymentStats struct {
+	TotalPayments    int64
+	SuccessfulCounts int64
+	FailedCounts     int64
+	TotalAmount      int64
+}

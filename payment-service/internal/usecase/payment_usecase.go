@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"context"
 	"errors"
 	"payment-service/internal/domain/model"
 	"payment-service/internal/repository"
@@ -39,4 +40,7 @@ func (u *paymentUsecase) ProcessPayment(orderID string, amount int64) (*model.Pa
 
 func (u *paymentUsecase) GetPayment(orderID string) (*model.Payment, error) {
 	return u.repo.GetByOrderID(orderID)
+}
+func (u *paymentUsecase) GetPaymentStats(ctx context.Context) (*model.PaymentStats, error) {
+	return u.repo.GetStats(ctx)
 }

@@ -37,3 +37,17 @@ func (s *PaymentServer) ProcessPayment(ctx context.Context, req *paymentpb.Payme
 		Status:        payment.Status,
 	}, nil
 }
+
+func (s *PaymentServer) GetPaymentStats(ctx context.Context, req *paymentpb.GetPaymentStatsRequest) (*paymentpb.PaymentStats, error) {
+	stats, err := s.usecase.GetPaymentStats(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &paymentpb.PaymentStats{
+		TotalPayments:    stats.TotalPayments,
+		SuccessfulCounts: stats.SuccessfulCounts,
+		FailedCounts:     stats.FailedCounts,
+		TotalAmount:      stats.TotalAmount,
+	}, nil
+}

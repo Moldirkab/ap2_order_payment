@@ -4,17 +4,21 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/Moldirkab/ap2-generated/ordertrackingpb"
+	"github.com/joho/godotenv"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"log"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/Moldirkab/ap2-generated/ordertrackingpb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("No .env file found")
+	}
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Print("Enter order ID: ")
@@ -24,9 +28,12 @@ func main() {
 	if orderID == "" {
 		log.Fatal("order ID cannot be empty")
 	}
-
+	addr := os.Getenv("ORDER_TRACKING_ADDR")
+	if addr == "" {
+		log.Fatal("ORDER_TRACKING_ADDR is required")
+	}
 	conn, err := grpc.Dial(
-		"127.0.0.1:50052",
+		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {

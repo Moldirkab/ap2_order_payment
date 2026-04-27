@@ -3,7 +3,7 @@ module payment-service
 go 1.25.5
 
 require (
-	github.com/Moldirkab/ap2-generated v1.0.0
+	github.com/Moldirkab/ap2-generated v1.0.1-0.20260419224146-2ab8fbd7735c
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.0
