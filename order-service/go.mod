@@ -3,7 +3,7 @@ module order-service
 go 1.25.5
 
 require (
-	github.com/Moldirkab/ap2-generated v1.0.0
+	github.com/Moldirkab/ap2-generated v1.0.1-0.20260428083635-1671acf369a7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1

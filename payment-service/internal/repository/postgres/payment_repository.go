@@ -26,29 +26,47 @@ func (r *paymentRepo) Create(payment *model.Payment) error {
 	}
 
 	_, err := r.db.Exec(
-		`INSERT INTO payments (id, order_id, transaction_id, amount, status)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		payment.ID, payment.OrderID, payment.TransactionID, payment.Amount, payment.Status,
+		`INSERT INTO payments (id, order_id, customer_email, transaction_id, amount, status)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		payment.ID,
+		payment.OrderID,
+		payment.CustomerEmail,
+		payment.TransactionID,
+		payment.Amount,
+		payment.Status,
 	)
 	return err
 }
 
 func (r *paymentRepo) GetByOrderID(orderID string) (*model.Payment, error) {
-	row := r.db.QueryRow(`SELECT id, order_id, transaction_id, amount, status FROM payments WHERE order_id=$1`, orderID)
+	row := r.db.QueryRow(`
+		SELECT id, order_id, customer_email, transaction_id, amount, status
+		FROM payments
+		WHERE order_id=$1
+	`, orderID)
+
 	var p model.Payment
-	err := row.Scan(&p.ID, &p.OrderID, &p.TransactionID, &p.Amount, &p.Status)
+	err := row.Scan(
+		&p.ID,
+		&p.OrderID,
+		&p.CustomerEmail,
+		&p.TransactionID,
+		&p.Amount,
+		&p.Status,
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &p, nil
 }
+
 func (r *paymentRepo) GetStats(ctx context.Context) (*model.PaymentStats, error) {
 	query := `
 		SELECT
 			COUNT(*) AS total_payments,
-			COUNT(*) FILTER (WHERE status = 'AUTHORIZED') AS successful_counts,
-			COUNT(*) FILTER (WHERE status = 'FAILED') AS failed_counts,
-			COALESCE(SUM(amount) FILTER (WHERE status = 'AUTHORIZED'), 0) AS total_amount
+			COUNT(*) FILTER (WHERE status = 'Authorized') AS successful_counts,
+			COUNT(*) FILTER (WHERE status = 'Declined') AS failed_counts,
+			COALESCE(SUM(amount) FILTER (WHERE status = 'Authorized'), 0) AS total_amount
 		FROM payments
 	`
 

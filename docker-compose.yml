@@ -1,0 +1,87 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  order-db:
+    image: postgres:16-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orders_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+
+  payment-db:
+    image: postgres:16-alpine
+    container_name: payment-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: payments_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - payment_db_data:/var/lib/postgresql/data
+
+  payment-service:
+    build:
+      context: ./payment-service
+    container_name: payment-service
+    restart: on-failure
+    depends_on:
+      - payment-db
+      - rabbitmq
+    environment:
+      DB_HOST: payment-db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: payments_db
+      PAYMENT_GRPC_PORT: 50051
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PAYMENT_EVENTS_QUEUE: payment.completed
+    ports:
+      - "50051:50051"
+
+  order-service:
+    build:
+      context: ./order-service
+    container_name: order-service
+    restart: on-failure
+    depends_on:
+      - order-db
+      - payment-service
+    environment:
+      DB_HOST: order-db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: orders_db
+      ORDER_HTTP_PORT: 8080
+      ORDER_GRPC_PORT: 50052
+      PAYMENT_GRPC_ADDR: payment-service:50051
+    ports:
+      - "8080:8080"
+      - "50052:50052"
+
+  notification-service:
+    build:
+      context: ./notification-service
+    container_name: notification-service
+    restart: on-failure
+    depends_on:
+      - rabbitmq
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PAYMENT_EVENTS_QUEUE: payment.completed
+
+volumes:
+  order_db_data:
+  payment_db_data:

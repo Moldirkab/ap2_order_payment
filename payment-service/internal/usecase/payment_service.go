@@ -6,7 +6,7 @@ import (
 )
 
 type PaymentService interface {
-	ProcessPayment(orderID string, amount int64) (*model.Payment, error)
+	ProcessPayment(orderID string, amount int64, customerEmail string) (*model.Payment, error)
 	GetPayment(orderID string) (*model.Payment, error)
 	GetPaymentStats(ctx context.Context) (*model.PaymentStats, error)
 }

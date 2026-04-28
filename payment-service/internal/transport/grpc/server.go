@@ -24,7 +24,15 @@ func (s *PaymentServer) ProcessPayment(ctx context.Context, req *paymentpb.Payme
 		return nil, status.Error(codes.InvalidArgument, "order_id is required")
 	}
 
-	payment, err := s.usecase.ProcessPayment(req.GetOrderId(), req.GetAmount())
+	if req.GetCustomerEmail() == "" {
+		return nil, status.Error(codes.InvalidArgument, "customer_email is required")
+	}
+
+	payment, err := s.usecase.ProcessPayment(
+		req.GetOrderId(),
+		req.GetAmount(),
+		req.GetCustomerEmail(),
+	)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}

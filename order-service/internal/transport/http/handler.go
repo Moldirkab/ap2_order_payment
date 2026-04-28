@@ -24,9 +24,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 
 func (h *Handler) CreateOrder(c *gin.Context) {
 	var req struct {
-		CustomerID string `json:"customer_id" binding:"required"`
-		ItemName   string `json:"item_name" binding:"required"`
-		Amount     int64  `json:"amount" binding:"required"`
+		CustomerID    string `json:"customer_id" binding:"required"`
+		CustomerEmail string `json:"customer_email" binding:"required"`
+		ItemName      string `json:"item_name" binding:"required"`
+		Amount        int64  `json:"amount" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -36,12 +37,20 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 
-	order, isNew, err := h.usecase.CreateOrder(req.CustomerID, req.ItemName, req.Amount, idempotencyKey)
+	order, isNew, err := h.usecase.CreateOrder(
+		req.CustomerID,
+		req.CustomerEmail,
+		req.ItemName,
+		req.Amount,
+		idempotencyKey,
+	)
 	if err != nil {
 		switch {
 		case errors.Is(err, usecase.ErrIdempotencyRequired):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case errors.Is(err, usecase.ErrInvalidAmount):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, usecase.ErrCustomerEmailRequired):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		case errors.Is(err, usecase.ErrPaymentServiceUnavailable):
 			c.JSON(http.StatusServiceUnavailable, gin.H{

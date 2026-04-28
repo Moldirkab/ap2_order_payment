@@ -13,6 +13,7 @@ import (
 var (
 	ErrIdempotencyRequired       = errors.New("idempotency key required")
 	ErrInvalidAmount             = errors.New("amount must be > 0")
+	ErrCustomerEmailRequired     = errors.New("customer email required")
 	ErrPaymentServiceUnavailable = errors.New("payment service unavailable")
 )
 
@@ -25,9 +26,12 @@ func NewOrderUsecase(r repository.OrderRepository, p PaymentClient) *OrderUsecas
 	return &OrderUsecase{repo: r, payment: p}
 }
 
-func (uc *OrderUsecase) CreateOrder(customerID, item string, amount int64, idempotencyKey string) (*model.Order, bool, error) {
+func (uc *OrderUsecase) CreateOrder(customerID, customerEmail, item string, amount int64, idempotencyKey string) (*model.Order, bool, error) {
 	if idempotencyKey == "" {
 		return nil, false, ErrIdempotencyRequired
+	}
+	if customerEmail == "" {
+		return nil, false, ErrCustomerEmailRequired
 	}
 	if amount <= 0 {
 		return nil, false, ErrInvalidAmount
@@ -44,6 +48,7 @@ func (uc *OrderUsecase) CreateOrder(customerID, item string, amount int64, idemp
 	order := &model.Order{
 		ID:             uuid.New().String(),
 		CustomerID:     customerID,
+		CustomerEmail:  customerEmail,
 		ItemName:       item,
 		Amount:         amount,
 		Status:         "Pending",
@@ -60,7 +65,7 @@ func (uc *OrderUsecase) CreateOrder(customerID, item string, amount int64, idemp
 
 	time.Sleep(2 * time.Second)
 
-	status, err := uc.payment.ProcessPayment(order.ID, order.Amount)
+	status, err := uc.payment.ProcessPayment(order.ID, order.Amount, order.CustomerEmail)
 	if err != nil {
 		_ = uc.repo.UpdateStatus(order.ID, "Failed")
 		order.Status = "Failed"

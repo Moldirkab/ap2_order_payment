@@ -17,9 +17,7 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("error loading .env file")
-	}
+	_ = godotenv.Load()
 
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
@@ -27,6 +25,10 @@ func main() {
 	password := os.Getenv("DB_PASSWORD")
 	dbname := os.Getenv("DB_NAME")
 	paymentGRPCPort := os.Getenv("PAYMENT_GRPC_PORT")
+
+	if paymentGRPCPort == "" {
+		paymentGRPCPort = "50051"
+	}
 
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
@@ -37,12 +39,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Fatal("db not reachable")
+		log.Fatal("db not reachable: ", err)
 	}
 
 	application := app.NewApp(db)
+	defer application.Close()
 
 	lis, err := net.Listen("tcp", ":"+paymentGRPCPort)
 	if err != nil {
@@ -56,6 +60,7 @@ func main() {
 	paymentpb.RegisterPaymentServiceServer(server, application.GRPCServer)
 
 	log.Println("payment gRPC listening on", ":"+paymentGRPCPort)
+
 	if err := server.Serve(lis); err != nil {
 		log.Fatal(err)
 	}
