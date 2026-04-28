@@ -32,7 +32,10 @@ func NewRabbitMQPublisher(url string, queueName string) (*RabbitMQPublisher, err
 		false,
 		false,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange":    "payment.dlx",
+			"x-dead-letter-routing-key": "payment.failed",
+		},
 	)
 	if err != nil {
 		ch.Close()

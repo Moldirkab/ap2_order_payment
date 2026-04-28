@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -29,6 +30,15 @@ func main() {
 		rabbitURL = "amqp://guest:guest@localhost:5672/"
 	}
 
+	queueName := os.Getenv("PAYMENT_EVENTS_QUEUE")
+	if queueName == "" {
+		queueName = "payment.completed"
+	}
+
+	dlxName := "payment.dlx"
+	dlqName := "payment.completed.dlq"
+	dlqRoutingKey := "payment.failed"
+
 	conn, err := amqp.Dial(rabbitURL)
 	if err != nil {
 		log.Fatal(err)
@@ -41,9 +51,40 @@ func main() {
 	}
 	defer ch.Close()
 
-	queueName := os.Getenv("PAYMENT_EVENTS_QUEUE")
-	if queueName == "" {
-		queueName = "payment.completed"
+	err = ch.ExchangeDeclare(
+		dlxName,
+		"direct",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = ch.QueueDeclare(
+		dlqName,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = ch.QueueBind(
+		dlqName,
+		dlqRoutingKey,
+		dlxName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	_, err = ch.QueueDeclare(
@@ -52,7 +93,10 @@ func main() {
 		false,
 		false,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange":    dlxName,
+			"x-dead-letter-routing-key": dlqRoutingKey,
+		},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -77,6 +121,7 @@ func main() {
 	}
 
 	processed := make(map[string]bool)
+	attempts := make(map[string]int)
 	var mu sync.Mutex
 
 	log.Println("Notification Service started. Waiting for payment.completed events...")
@@ -94,17 +139,38 @@ func main() {
 			}
 
 			var event PaymentCompletedEvent
-			err := json.Unmarshal(msg.Body, &event)
-			if err != nil {
+			if err := json.Unmarshal(msg.Body, &event); err != nil {
 				log.Println("Invalid message:", err)
 				msg.Nack(false, false)
+				continue
+			}
+
+			if event.CustomerEmail == "fail@example.com" {
+				mu.Lock()
+				attempts[event.EventID]++
+				currentAttempt := attempts[event.EventID]
+				mu.Unlock()
+
+				log.Printf("[Error] Simulated permanent failure for event %s. Attempt %d/3",
+					event.EventID,
+					currentAttempt,
+				)
+
+				if currentAttempt >= 3 {
+					log.Printf("[DLQ] Event %s failed 3 times. Moving to DLQ", event.EventID)
+					msg.Nack(false, false)
+					continue
+				}
+
+				time.Sleep(2 * time.Second)
+				msg.Nack(false, true)
 				continue
 			}
 
 			mu.Lock()
 			if processed[event.EventID] {
 				mu.Unlock()
-				log.Printf("[Duplicate] Event %s already processed\n", event.EventID)
+				log.Printf("[Duplicate] Event %s already processed", event.EventID)
 				msg.Ack(false)
 				continue
 			}
@@ -113,14 +179,13 @@ func main() {
 			mu.Unlock()
 
 			log.Printf(
-				"[Notification] Sent email to %s for Order #%s. Amount: $%.2f\n",
+				"[Notification] Sent email to %s for Order #%s. Amount: $%.2f",
 				event.CustomerEmail,
 				event.OrderID,
 				float64(event.Amount)/100,
 			)
 
-			err = msg.Ack(false)
-			if err != nil {
+			if err := msg.Ack(false); err != nil {
 				log.Println("ACK failed:", err)
 			}
 		}

@@ -36,7 +36,7 @@ func NewConsumer(url, queueName string) (*Consumer, error) {
 
 	q, err := ch.QueueDeclare(
 		queueName,
-		true, // durable
+		true,
 		false,
 		false,
 		false,
@@ -79,14 +79,12 @@ func (c *Consumer) Start() error {
 			continue
 		}
 
-		// Idempotency check
 		if c.processed[event.EventID] {
 			log.Println("Duplicate event ignored:", event.EventID)
 			msg.Ack(false)
 			continue
 		}
 
-		// Simulate email
 		log.Printf("[Notification] Sent email to %s for Order #%s. Amount: %d\n",
 			event.CustomerEmail,
 			event.OrderID,
