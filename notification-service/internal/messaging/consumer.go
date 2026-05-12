@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"sync"
 	"time"
 
+	"notification-service/internal/provider"
+
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
 type PaymentCompletedEvent struct {
@@ -21,20 +23,20 @@ type PaymentCompletedEvent struct {
 type Consumer struct {
 	rabbitURL string
 	queueName string
+	redis     *redis.Client
+	sender    provider.EmailSender
 }
 
-func NewConsumer(rabbitURL, queueName string) *Consumer {
+func NewConsumer(rabbitURL string, queueName string, redisClient *redis.Client) *Consumer {
 	return &Consumer{
 		rabbitURL: rabbitURL,
 		queueName: queueName,
+		redis:     redisClient,
+		sender:    provider.NewEmailSender(),
 	}
 }
 
 func (c *Consumer) Start(ctx context.Context) error {
-	dlxName := "payment.dlx"
-	dlqName := "payment.completed.dlq"
-	dlqRoutingKey := "payment.failed"
-
 	conn, err := amqp.Dial(c.rabbitURL)
 	if err != nil {
 		return err
@@ -46,62 +48,6 @@ func (c *Consumer) Start(ctx context.Context) error {
 		return err
 	}
 	defer ch.Close()
-
-	err = ch.ExchangeDeclare(
-		dlxName,
-		"direct",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = ch.QueueDeclare(
-		dlqName,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	err = ch.QueueBind(
-		dlqName,
-		dlqRoutingKey,
-		dlxName,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = ch.QueueDeclare(
-		c.queueName,
-		true,
-		false,
-		false,
-		false,
-		amqp.Table{
-			"x-dead-letter-exchange":    dlxName,
-			"x-dead-letter-routing-key": dlqRoutingKey,
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	err = ch.Qos(1, 0, false)
-	if err != nil {
-		return err
-	}
 
 	msgs, err := ch.Consume(
 		c.queueName,
@@ -116,83 +62,76 @@ func (c *Consumer) Start(ctx context.Context) error {
 		return err
 	}
 
-	processed := make(map[string]bool)
-	attempts := make(map[string]int)
-	var mu sync.Mutex
-
-	log.Println("Notification Service started. Waiting for payment.completed events...")
+	log.Println("Notification worker started...")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Notification Service shutting down...")
 			return nil
 
 		case msg, ok := <-msgs:
 			if !ok {
-				log.Println("Message channel closed")
 				return nil
 			}
 
-			c.handleMessage(msg, processed, attempts, &mu)
+			c.handleMessage(ctx, msg)
 		}
 	}
 }
 
-func (c *Consumer) handleMessage(
-	msg amqp.Delivery,
-	processed map[string]bool,
-	attempts map[string]int,
-	mu *sync.Mutex,
-) {
+func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	var event PaymentCompletedEvent
+
 	if err := json.Unmarshal(msg.Body, &event); err != nil {
-		log.Println("Invalid message:", err)
+		log.Println("invalid message:", err)
 		msg.Nack(false, false)
 		return
 	}
 
-	if event.CustomerEmail == "fail@example.com" {
-		mu.Lock()
-		attempts[event.EventID]++
-		currentAttempt := attempts[event.EventID]
-		mu.Unlock()
+	key := "notification:" + event.EventID
 
-		log.Printf("[Error] Simulated permanent failure for event %s. Attempt %d/3",
-			event.EventID,
-			currentAttempt,
-		)
+	status, _ := c.redis.Get(ctx, key).Result()
 
-		if currentAttempt >= 3 {
-			log.Printf("[DLQ] Event %s failed 3 times. Moving to DLQ", event.EventID)
-			msg.Nack(false, false)
-			return
-		}
-
-		time.Sleep(2 * time.Second)
-		msg.Nack(false, true)
-		return
-	}
-
-	mu.Lock()
-	if processed[event.EventID] {
-		mu.Unlock()
-		log.Printf("[Duplicate] Event %s already processed", event.EventID)
+	if status == "done" {
+		log.Println("already processed:", event.EventID)
 		msg.Ack(false)
 		return
 	}
 
-	processed[event.EventID] = true
-	mu.Unlock()
-
-	log.Printf(
-		"[Notification] Sent email to %s for Order #%s. Amount: $%.2f",
-		event.CustomerEmail,
-		event.OrderID,
-		float64(event.Amount)/100,
-	)
-
-	if err := msg.Ack(false); err != nil {
-		log.Println("ACK failed:", err)
+	if status == "processing" {
+		log.Println("already processing:", event.EventID)
+		msg.Nack(false, true)
+		return
 	}
+
+	c.redis.Set(ctx, key, "processing", 10*time.Minute)
+
+	maxRetries := 3
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+
+		err := c.sender.Send(
+			event.CustomerEmail,
+			"Payment Successful",
+			"Your payment was successful",
+		)
+
+		if err == nil {
+			log.Printf("email sent to %s (order %s)", event.CustomerEmail, event.OrderID)
+
+			c.redis.Set(ctx, key, "done", 24*time.Hour)
+
+			msg.Ack(false)
+			return
+		}
+
+		log.Printf("attempt %d failed for %s", attempt, event.CustomerEmail)
+
+		backoff := time.Duration(2<<attempt) * time.Second
+		time.Sleep(backoff)
+	}
+
+	log.Println("FAILED permanently:", event.EventID)
+
+	msg.Nack(false, false)
 }

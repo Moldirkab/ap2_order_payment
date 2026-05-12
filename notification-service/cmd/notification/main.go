@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"notification-service/internal/messaging"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -15,16 +17,18 @@ func main() {
 	defer stop()
 
 	rabbitURL := os.Getenv("RABBITMQ_URL")
-	if rabbitURL == "" {
-		rabbitURL = "amqp://guest:guest@localhost:5672/"
+	queue := os.Getenv("PAYMENT_EVENTS_QUEUE")
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "redis:6379"
 	}
 
-	queueName := os.Getenv("PAYMENT_EVENTS_QUEUE")
-	if queueName == "" {
-		queueName = "payment.completed"
-	}
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
 
-	consumer := messaging.NewConsumer(rabbitURL, queueName)
+	consumer := messaging.NewConsumer(rabbitURL, queue, redisClient)
 
 	if err := consumer.Start(ctx); err != nil {
 		log.Fatal(err)

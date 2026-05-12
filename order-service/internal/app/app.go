@@ -2,10 +2,13 @@ package app
 
 import (
 	"database/sql"
+	"order-service/internal/cache"
 	"order-service/internal/repository/postgres"
 	grpcTransport "order-service/internal/transport/grpc"
 	httpTransport "order-service/internal/transport/http"
 	"order-service/internal/usecase"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -14,7 +17,7 @@ type App struct {
 	PaymentClient       *grpcTransport.PaymentGRPCClient
 }
 
-func NewApp(db *sql.DB, paymentGRPCAddr string) (*App, error) {
+func NewApp(db *sql.DB, paymentGRPCAddr string, redisClient *redis.Client) (*App, error) {
 	orderRepo := postgres.NewOrderRepository(db)
 
 	paymentClient, err := grpcTransport.NewPaymentGRPCClient(paymentGRPCAddr)
@@ -22,7 +25,10 @@ func NewApp(db *sql.DB, paymentGRPCAddr string) (*App, error) {
 		return nil, err
 	}
 
-	orderUC := usecase.NewOrderUsecase(orderRepo, paymentClient)
+	redisCache := cache.NewRedisCache(redisClient)
+
+	orderUC := usecase.NewOrderUsecase(orderRepo, paymentClient, redisCache)
+
 	httpHandler := httpTransport.NewHandler(orderUC)
 	orderTrackingServer := grpcTransport.NewOrderTrackingServer(db)
 

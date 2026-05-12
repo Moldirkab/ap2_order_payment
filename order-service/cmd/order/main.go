@@ -8,11 +8,14 @@ import (
 	"os"
 
 	"order-service/internal/app"
+	"order-service/internal/cache"
+	"order-service/internal/middleware"
 
 	"github.com/Moldirkab/ap2-generated/ordertrackingpb"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
 
@@ -43,7 +46,13 @@ func main() {
 		log.Fatal("db not reachable")
 	}
 
-	application, err := app.NewApp(db, paymentGRPCAddr)
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_ADDR"),
+	})
+
+	redisCache := cache.NewRedisCache(redisClient)
+
+	application, err := app.NewApp(db, paymentGRPCAddr, redisClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,10 +60,16 @@ func main() {
 
 	go func() {
 		r := gin.Default()
+
+		// Rate limiter: 10 requests per 60 seconds
+		rateLimiter := middleware.NewRateLimiter(redisCache, 10, 60)
+		r.Use(rateLimiter.Middleware())
+
 		application.HTTPHandler.RegisterRoutes(r)
 
 		addr := ":" + orderHTTPPort
 		log.Println("order REST listening on", addr)
+
 		if err := r.Run(addr); err != nil {
 			log.Fatal(err)
 		}
@@ -66,9 +81,14 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	ordertrackingpb.RegisterOrderTrackingServiceServer(grpcServer, application.OrderTrackingServer)
+
+	ordertrackingpb.RegisterOrderTrackingServiceServer(
+		grpcServer,
+		application.OrderTrackingServer,
+	)
 
 	log.Println("order gRPC listening on", ":"+orderGRPCPort)
+
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatal(err)
 	}

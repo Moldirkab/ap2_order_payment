@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -17,13 +18,24 @@ var (
 	ErrPaymentServiceUnavailable = errors.New("payment service unavailable")
 )
 
+type Cache interface {
+	Get(key string) (string, error)
+	Set(key string, value string, ttl int) error
+	Delete(key string) error
+}
+
 type OrderUsecase struct {
 	repo    repository.OrderRepository
 	payment PaymentClient
+	cache   Cache
 }
 
-func NewOrderUsecase(r repository.OrderRepository, p PaymentClient) *OrderUsecase {
-	return &OrderUsecase{repo: r, payment: p}
+func NewOrderUsecase(r repository.OrderRepository, p PaymentClient, c Cache) *OrderUsecase {
+	return &OrderUsecase{
+		repo:    r,
+		payment: p,
+		cache:   c,
+	}
 }
 
 func (uc *OrderUsecase) CreateOrder(customerID, customerEmail, item string, amount int64, idempotencyKey string) (*model.Order, bool, error) {
@@ -69,6 +81,9 @@ func (uc *OrderUsecase) CreateOrder(customerID, customerEmail, item string, amou
 	if err != nil {
 		_ = uc.repo.UpdateStatus(order.ID, "Failed")
 		order.Status = "Failed"
+
+		uc.cache.Delete("order:" + order.ID)
+
 		return order, true, ErrPaymentServiceUnavailable
 	}
 
@@ -80,13 +95,31 @@ func (uc *OrderUsecase) CreateOrder(customerID, customerEmail, item string, amou
 		order.Status = "Failed"
 	}
 
+	uc.cache.Delete("order:" + order.ID)
+
 	return order, true, nil
 }
-
 func (uc *OrderUsecase) GetOrder(id string) (*model.Order, error) {
-	return uc.repo.GetByID(id)
-}
+	key := "order:" + id
 
+	cached, err := uc.cache.Get(key)
+	if err == nil {
+		var order model.Order
+		if json.Unmarshal([]byte(cached), &order) == nil {
+			return &order, nil
+		}
+	}
+
+	order, err := uc.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	data, _ := json.Marshal(order)
+	_ = uc.cache.Set(key, string(data), 300)
+
+	return order, nil
+}
 func (uc *OrderUsecase) CancelOrder(id string) error {
 	order, err := uc.repo.GetByID(id)
 	if err != nil {
@@ -97,5 +130,12 @@ func (uc *OrderUsecase) CancelOrder(id string) error {
 		return errors.New("only pending orders can be cancelled")
 	}
 
-	return uc.repo.UpdateStatus(id, "Cancelled")
+	err = uc.repo.UpdateStatus(id, "Cancelled")
+	if err != nil {
+		return err
+	}
+
+	uc.cache.Delete("order:" + id)
+
+	return nil
 }
