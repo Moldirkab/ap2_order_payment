@@ -14,7 +14,7 @@ External communication is done via **REST**, while internal service-to-service c
 
 ##  Architecture
 
-![Architecture](architecture3.png)
+![Architecture](architecture4.png)
 
 ### Flow:
 1. Client sends HTTP request → **Order Service**
@@ -139,3 +139,76 @@ The Notification Service retried processing the same event three times. After th
 ![RabbitMQ](rabbitMQ.png)
 ##  Dead letter queue from terminal
 ![Dead Letter Queue](dead-letter-queue.png)
+
+# ⚡ Redis Usage
+
+Redis is used as a shared in-memory data store for:
+
+## 1. Cache-aside Pattern (Order Service)
+- Order data is cached in Redis before querying the database
+- Improves performance and reduces database load
+- TTL is used (e.g., 5 minutes)
+- Cache is invalidated when order status changes
+- 
+## 2. Idempotency (Notification Service)
+- Prevents duplicate email sending
+- Each event is stored in Redis: notification:<event_id>
+### States:
+- `processing` → currently being handled
+- `done` → already processed
+
+This ensures:
+✔ No duplicate emails  
+✔ Safe retries  
+✔ Exactly-once processing behavior (practically)
+
+---
+
+## 3. API Rate Limiting (Order Service)
+
+A Redis-based middleware limits API requests per IP.
+
+### Key format:
+rate_limit: <ip_address>
+### Behavior:
+- Each request increments Redis counter
+- Limit: 10 requests per minute
+- After limit is exceeded → HTTP 429 Too Many Requests
+- TTL resets counter automatically
+
+---
+
+#  Notification Service
+
+The Notification Service is a background worker that:
+
+## Responsibilities:
+- Consumes messages from RabbitMQ queue (`payment.completed`)
+- Sends email notifications
+- Ensures reliability using retries + idempotency
+
+---
+
+## 🔁 Retry Mechanism
+
+If email sending fails:
+- System retries up to 3 times
+- Uses exponential backoff:
+  - 2s → 4s → 8s
+
+This ensures resilience against temporary failures.
+
+---
+
+##  Provider Adapter Pattern
+
+Notification system supports multiple email providers:
+
+### 1. Mock Provider (SIMULATED mode)
+- Simulates network delay
+- Random failures for testing retry logic
+- Used for development/testing
+
+### 2. SMTP Provider (REAL mode)
+- Sends real emails via SMTP (e.g., Mailtrap)
+- Used for production-like testing
