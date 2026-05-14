@@ -18,7 +18,8 @@ func (s *SMTPSender) Send(to, subject, body string) error {
 	pass := os.Getenv("SMTP_PASS")
 
 	msg := []byte(
-		"To: " + to + "\r\n" +
+		"From: " + user + "\r\n" +
+			"To: " + to + "\r\n" +
 			"Subject: " + subject + "\r\n" +
 			"\r\n" +
 			body + "\r\n",
@@ -26,11 +27,13 @@ func (s *SMTPSender) Send(to, subject, body string) error {
 
 	auth := smtp.PlainAuth("", user, pass, host)
 
-	return smtp.SendMail(
+	err := smtp.SendMail(
 		host+":"+port,
 		auth,
 		user,
 		[]string{to},
 		msg,
 	)
+
+	return err
 }
